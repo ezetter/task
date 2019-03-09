@@ -1,7 +1,9 @@
 package db
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"go.etcd.io/bbolt"
 	bolt "go.etcd.io/bbolt"
@@ -9,36 +11,58 @@ import (
 
 var db *bbolt.DB
 
-func ListTasks() []string {
-	var tasks []string
+func ListTasks() []Task {
+	var tasks []Task
 	db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("Tasks"))
 		c := b.Cursor()
-		for k, _ := c.First(); k != nil; k, _ = c.Next() {
-			tasks = append(tasks, string(k))
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			var t Task
+			json.Unmarshal(v, &t)
+			tasks = append(tasks, t)
 		}
 		return nil
 	})
 	return tasks
 }
 
+type Task struct {
+	ID     uint64
+	Desc   string
+	Status string
+}
+
 func AddTask(task string) error {
 	return db.Update(func(tx *bolt.Tx) error {
+		var id uint64
 		b := tx.Bucket([]byte("Tasks"))
-		err := b.Put([]byte(task), []byte("INPROGRESS"))
-		return err
+		id, err := b.NextSequence()
+		if err != nil {
+			return err
+		}
+		t := new(Task)
+		t.ID = id
+		t.Desc = task
+		t.Status = "INPROGRESS"
+
+		if buf, err := json.Marshal(t); err != nil {
+			return err
+		} else if err := b.Put([]byte(strconv.FormatUint(id, 10)), buf); err != nil {
+			return err
+		}
+
+		return nil
 	})
 }
 
 func RemoveTask(taskNum int) string {
 	task := ListTasks()[taskNum-1]
-
 	db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("Tasks"))
-		err := b.Delete([]byte(task))
+		err := b.Delete([]byte(strconv.FormatUint(task.ID, 10)))
 		return err
 	})
-	return task
+	return task.Desc
 }
 
 func Init(path string) error {
